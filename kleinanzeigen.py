@@ -42,6 +42,13 @@ class Listing:
     term: str
 
 
+@dataclass
+class SearchTermConfig:
+    term: str
+    min_price: float | None = None
+    max_price: float | None = None
+
+
 def is_blacklisted_title(
     title: str,
     search_term: str,
@@ -155,29 +162,50 @@ def fetch_listings_for_term(
 
 
 def find_matching_listings(
-    search_terms: Iterable[str],
+    search_terms: Iterable[SearchTermConfig | str],
     min_price: Optional[float] = None,
     max_price: Optional[float] = None,
     extra_blacklist: Optional[Sequence[str]] = None,
 ) -> list[Listing]:
     all_hits: list[Listing] = []
+    configs: list[SearchTermConfig] = []
+
     for term in search_terms:
+        if isinstance(term, SearchTermConfig):
+            configs.append(term)
+        else:
+            configs.append(SearchTermConfig(term=str(term)))
+
+    for cfg in configs:
         try:
-            listings = fetch_listings_for_term(term, extra_blacklist=extra_blacklist)
+            listings = fetch_listings_for_term(cfg.term, extra_blacklist=extra_blacklist)
         except Exception as e:
-            print(f"[ERROR] Failed for term '{term}': {e}")
+            print(f"[ERROR] Failed for term '{cfg.term}': {e}")
             continue
 
+        effective_min = cfg.min_price if cfg.min_price is not None else min_price
+        effective_max = cfg.max_price if cfg.max_price is not None else max_price
+
         for listing in listings:
-            if min_price is not None and listing.price < min_price:
+            if effective_min is not None and listing.price < effective_min:
                 continue
-            if max_price is not None and listing.price > max_price:
+            if effective_max is not None and listing.price > effective_max:
                 continue
             all_hits.append(listing)
 
         time.sleep(2)
 
-    return sorted(all_hits, key=lambda x: x.price)
+    # Deduplicate listings by URL across all terms to avoid duplicates when
+    # multiple variants match the same ad.
+    seen_urls: set[str] = set()
+    unique_hits: list[Listing] = []
+    for listing in all_hits:
+        if listing.url in seen_urls:
+            continue
+        seen_urls.add(listing.url)
+        unique_hits.append(listing)
+
+    return sorted(unique_hits, key=lambda x: x.price)
 
 
 STATE_PATH = Path.home() / ".cache" / "kleinanzeigen_seen.json"
@@ -360,11 +388,74 @@ def print_listings(
         print(f"  {listing.url}\n")
 
 
+def parse_search_term_arg(arg: str) -> list[SearchTermConfig]:
+    """
+    Parse a positional search term argument.
+
+    Supported forms:
+      - "term"
+      - "term1|term2|term3"
+      - "term:MIN"
+      - "term:MIN-MAX"
+      - "term1|term2:MIN-MAX"
+    """
+    term_part, sep, price_part = arg.partition(":")
+    term_raw = term_part.strip()
+    if not term_raw:
+        raise ValueError(f"Invalid search term '{arg}': empty term.")
+
+    term_variants = [t.strip() for t in term_raw.split("|") if t.strip()]
+    if not term_variants:
+        raise ValueError(f"Invalid search term '{arg}': empty term.")
+
+    if not sep:
+        return [SearchTermConfig(term=t) for t in term_variants]
+
+    price_str = price_part.strip()
+    if not price_str:
+        raise ValueError(f"Invalid search term '{arg}': missing price after ':'.")
+
+    local_min: float | None = None
+    local_max: float | None = None
+
+    if "-" in price_str:
+        low_str, high_str = [s.strip() for s in price_str.split("-", 1)]
+        if not low_str or not high_str:
+            raise ValueError(
+                f"Invalid price range '{price_str}' in search term '{arg}'."
+            )
+        try:
+            local_min = float(low_str.replace(",", "."))
+            local_max = float(high_str.replace(",", "."))
+        except ValueError:
+            raise ValueError(
+                f"Invalid price range '{price_str}' in search term '{arg}'."
+            )
+        if local_max < local_min:
+            raise ValueError(
+                f"Invalid price range '{price_str}' in search term '{arg}': "
+                "max < min."
+            )
+    else:
+        try:
+            local_min = float(price_str.replace(",", "."))
+        except ValueError:
+            raise ValueError(
+                f"Invalid price '{price_str}' in search term '{arg}'."
+            )
+        local_max = None
+
+    return [
+        SearchTermConfig(term=t, min_price=local_min, max_price=local_max)
+        for t in term_variants
+    ]
+
+
 def run_once(
     notify: bool,
     enable_email: bool,
     enable_ntfy: bool,
-    search_terms: Iterable[str],
+    search_terms: Iterable[SearchTermConfig | str],
     min_price: Optional[float] = None,
     max_price: Optional[float] = None,
     extra_blacklist: Optional[Sequence[str]] = None,
@@ -401,7 +492,10 @@ def main() -> None:
     parser.add_argument(
         "search_terms",
         nargs="*",
-        help="Kleinanzeigen search terms (one or more strings).",
+        help=(
+            "Kleinanzeigen search terms. Each term can optionally include a "
+            "per-term price range as 'TERM:MIN' or 'TERM:MIN-MAX'."
+        ),
     )
     parser.add_argument(
         "--notify",
@@ -447,7 +541,13 @@ def main() -> None:
     if not args.search_terms:
         parser.error("at least one search term is required")
 
-    search_terms: Iterable[str] = args.search_terms
+    search_terms_cfg: list[SearchTermConfig] = []
+    try:
+        for arg in args.search_terms:
+            search_terms_cfg.extend(parse_search_term_arg(arg))
+    except ValueError as e:
+        parser.error(str(e))
+
     min_price: Optional[float] = float(args.min_price) if args.min_price is not None else None
     max_price: Optional[float] = float(args.max_price) if args.max_price is not None else None
     extra_blacklist: Optional[Sequence[str]] = args.blacklist
@@ -464,7 +564,7 @@ def main() -> None:
         notify=args.notify,
         enable_email=not args.no_email,
         enable_ntfy=not args.no_ntfy,
-        search_terms=search_terms,
+        search_terms=search_terms_cfg,
         min_price=min_price,
         max_price=max_price,
         extra_blacklist=extra_blacklist,

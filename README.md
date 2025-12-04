@@ -46,7 +46,9 @@ check-kleinanzeigen-cpus --notify
 
 Search terms are positional arguments; price limits, blacklist tweaks, and cache control are optional flags:
 
-- `<search-term> ...` – one or more search term strings (required)
+- `<search-term> ...` – one or more search term strings (required). Each term can optionally include:
+  - per-term price range as `TERM:MIN` or `TERM:MIN-MAX`, and/or
+  - multiple variants separated by `|` (e.g. `term-en|term-de|1234:MIN-MAX`).
 - `--min-price` – minimum price in EUR (optional)
 - `--max-price` – maximum price in EUR (optional)
 - `--blacklist` – additional case-insensitive substrings to blacklist in titles (can be repeated)
@@ -63,6 +65,17 @@ python3 kleinanzeigen.py \
   "ryzen 7 5800x3d" "ryzen 9 5900x" \
   --min-price 180 --max-price 260 \
   --notify --no-email
+
+# Per-term price ranges (overriding global min/max for that term)
+python3 kleinanzeigen.py \
+  "ryzen 7 5800x3d:180-260" \
+  "ryzen 9 5900x:200-320" \
+  --notify
+
+# Multiple variants for one logical search (e.g. LEGO set title in English/German and set number)
+python3 kleinanzeigen.py \
+  "lego hogwarts castle|lego schloss hogwarts|75954:40-80" \
+  --notify
 
 # Add extra blacklist hints (on top of built-in heuristics)
 python3 kleinanzeigen.py \
@@ -181,6 +194,20 @@ WantedBy=default.target
 ```bash
 systemctl --user daemon-reload
 systemctl --user enable --now deal-finder.timer
+```
+
+Whenever you change the `deal-finder.service` or `deal-finder.timer` unit file, reload and restart so systemd picks up the new definition:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user restart deal-finder.timer      # for schedule/unit changes
+systemctl --user start deal-finder.service      # optional: run a search immediately
+```
+
+If you only change the env file (e.g. `~/.config/deal-finder.env`), you do **not** need `daemon-reload`; just restart the service or wait for the next timer run:
+
+```bash
+systemctl --user restart deal-finder.service
 ```
 
 Check timer status and upcoming runs:
