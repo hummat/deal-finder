@@ -230,6 +230,84 @@ To keep it running while logged out, enable lingering for your user:
 loginctl enable-linger "$USER"
 ```
 
+### Termux (Android)
+
+You can run deal-finder on your Android phone using [Termux](https://f-droid.org/packages/com.termux/).
+
+1. Install Termux from F-Droid (not Play Store – the Play Store version is outdated).
+
+2. Install dependencies:
+
+```bash
+pkg update && pkg upgrade
+pkg install python git
+pip install requests beautifulsoup4
+```
+
+3. Clone the repository:
+
+```bash
+mkdir -p ~/git && cd ~/git
+git clone https://github.com/YOUR_USERNAME/deal-finder.git
+cd deal-finder
+```
+
+4. Add environment variables to `~/.bashrc`:
+
+```bash
+# deal-finder notifications
+export DEAL_NOTIFIER_EMAIL_FROM="you@example.com"
+export DEAL_NOTIFIER_EMAIL_TO="you@example.com"
+export DEAL_NOTIFIER_SMTP_HOST="smtp.example.com"
+export DEAL_NOTIFIER_SMTP_PORT="587"
+export DEAL_NOTIFIER_SMTP_USER="you@example.com"
+export DEAL_NOTIFIER_SMTP_PASSWORD="your-password"
+export DEAL_NOTIFIER_SMTP_STARTTLS="1"
+
+export DEAL_NOTIFIER_NTFY_TOPIC="your-ntfy-topic"
+
+# Start crond if not running
+pgrep -x crond > /dev/null || crond
+```
+
+5. Install cronie and reload your shell:
+
+```bash
+pkg install cronie
+source ~/.bashrc
+```
+
+6. Create a crontab entry (runs every hour):
+
+```bash
+crontab -e
+```
+
+Add:
+
+```cron
+0 * * * * . $HOME/.bashrc && cd $HOME/git/deal-finder && python3 kleinanzeigen.py "your search term:MIN-MAX" --notify >> $HOME/.cache/deal-finder.log 2>&1
+```
+
+7. Useful commands:
+
+```bash
+# View/edit crontab
+crontab -l
+crontab -e
+
+# Check logs
+tail -f ~/.cache/deal-finder.log
+
+# Test manually
+cd ~/git/deal-finder && python3 kleinanzeigen.py "test" --notify
+
+# Check if crond is running
+pgrep -x crond
+```
+
+**Note:** Termux must remain running in the background for cron jobs to execute. Consider disabling battery optimization for Termux in Android settings. For persistence across device reboots, install the [Termux:Boot](https://f-droid.org/packages/com.termux.boot/) app.
+
 ## Future extensions
 
 Planned / obvious next steps:
