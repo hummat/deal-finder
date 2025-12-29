@@ -40,7 +40,7 @@ python3 kleinanzeigen.py "term" --clear-seen --notify
 
 ### Console Script (after install)
 ```bash
-check-kleinanzeigen-cpus --notify
+deal-finder "search term" --notify
 ```
 
 **Note:** No test suite exists in this repository.
