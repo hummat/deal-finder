@@ -4,16 +4,37 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "deal-finder"
-version = "0.1.0"
+version = "0.1.1"
 description = "Minimal Kleinanzeigen deal finder with email + ntfy notifications."
+readme = "README.md"
+license = "MIT"
 requires-python = ">=3.10"
 authors = [
-  { name = "Matthias" },
+  { name = "Matthias Humt" },
 ]
 dependencies = [
   "requests",
   "beautifulsoup4",
 ]
 
+[project.urls]
+Repository = "https://github.com/hummat/deal-finder"
+
+[dependency-groups]
+dev = [
+  "ruff",
+  "pyright",
+]
+
 [project.scripts]
-check-kleinanzeigen-cpus = "deal_finder.kleinanzeigen:main"
+deal-finder = "deal_finder.kleinanzeigen:main"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+
+[tool.pyright]
+pythonVersion = "3.10"
+typeCheckingMode = "standard"

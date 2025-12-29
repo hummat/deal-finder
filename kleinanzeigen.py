@@ -3,20 +3,20 @@ import argparse
 import json
 import os
 import re
+import smtplib
 import time
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from email.message import EmailMessage
 from pathlib import Path
-from typing import Iterable, List, Sequence, Set, Optional
 
 import requests
 from bs4 import BeautifulSoup
 
+__version__ = "0.1.1"
+
 BASE_URL = "https://www.kleinanzeigen.de/s-"
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
-)
+USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 TIMEOUT = 10
 
 # Titles that usually indicate "full PC / setup / bundle", not a single item
@@ -52,15 +52,20 @@ class SearchTermConfig:
 def is_blacklisted_title(
     title: str,
     search_term: str,
-    extra_blacklist: Optional[Sequence[str]] = None,
+    extra_blacklist: Sequence[str] | None = None,
 ) -> bool:
     t = title.lower()
     term_lower = search_term.lower()
     # Obvious gaming PC / setup phrases, unless the user is explicitly
     # searching for those words.
-    if "gaming" in t and ("pc" in t or "setup" in t):
-        if "gaming" not in term_lower and "pc" not in term_lower and "setup" not in term_lower:
-            return True
+    if (
+        "gaming" in t
+        and ("pc" in t or "setup" in t)
+        and "gaming" not in term_lower
+        and "pc" not in term_lower
+        and "setup" not in term_lower
+    ):
+        return True
 
     # Default blacklist substrings, but don't blacklist substrings that
     # are part of the search term.
@@ -99,8 +104,8 @@ def parse_price(text: str) -> float | None:
 
 def fetch_listings_for_term(
     term: str,
-    extra_blacklist: Optional[Sequence[str]] = None,
-) -> List[Listing]:
+    extra_blacklist: Sequence[str] | None = None,
+) -> list[Listing]:
     slug = term.lower().replace(" ", "-")
     url = f"{BASE_URL}{slug}/k0"
     headers = {"User-Agent": USER_AGENT}
@@ -110,7 +115,7 @@ def fetch_listings_for_term(
     resp.raise_for_status()
 
     soup = BeautifulSoup(resp.text, "html.parser")
-    listings: List[Listing] = []
+    listings: list[Listing] = []
 
     for ad in soup.select("article.aditem, article.aditem-container, article"):
         title_el = None
@@ -139,13 +144,12 @@ def fetch_listings_for_term(
         if is_blacklisted_title(title, search_term=term, extra_blacklist=extra_blacklist):
             continue
 
-        href = title_el.get("href") or ""
+        href_attr = title_el.get("href")
+        href = str(href_attr) if href_attr else ""
         if not href.startswith("http"):
             href = "https://www.kleinanzeigen.de" + href
 
-        price_el = ad.select_one(
-            ".aditem-main--middle--price-shipping, .aditem-main--middle--price"
-        )
+        price_el = ad.select_one(".aditem-main--middle--price-shipping, .aditem-main--middle--price")
         price_text = price_el.get_text(" ", strip=True) if price_el else ""
         price = parse_price(price_text)
 
@@ -154,18 +158,16 @@ def fetch_listings_for_term(
 
         if price is None:
             continue
-        listings.append(
-            Listing(title=title, price=price, location=location, url=href, term=term)
-        )
+        listings.append(Listing(title=title, price=price, location=location, url=href, term=term))
 
     return listings
 
 
 def find_matching_listings(
     search_terms: Iterable[SearchTermConfig | str],
-    min_price: Optional[float] = None,
-    max_price: Optional[float] = None,
-    extra_blacklist: Optional[Sequence[str]] = None,
+    min_price: float | None = None,
+    max_price: float | None = None,
+    extra_blacklist: Sequence[str] | None = None,
 ) -> list[Listing]:
     all_hits: list[Listing] = []
     configs: list[SearchTermConfig] = []
@@ -211,7 +213,7 @@ def find_matching_listings(
 STATE_PATH = Path.home() / ".cache" / "kleinanzeigen_seen.json"
 
 
-def load_seen_urls() -> Set[str]:
+def load_seen_urls() -> set[str]:
     try:
         raw = STATE_PATH.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -233,7 +235,7 @@ def load_seen_urls() -> Set[str]:
     return {str(item) for item in data}
 
 
-def save_seen_urls(urls: Set[str]) -> None:
+def save_seen_urls(urls: set[str]) -> None:
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     try:
         STATE_PATH.write_text(json.dumps(sorted(urls)), encoding="utf-8")
@@ -253,11 +255,7 @@ def filter_new_listings(listings: Sequence[Listing]) -> list[Listing]:
 
 
 def format_listing(listing: Listing) -> str:
-    return (
-        f"[{listing.term}] {listing.price:.0f} € | {listing.title}\n"
-        f"{listing.location}\n"
-        f"{listing.url}"
-    )
+    return f"[{listing.term}] {listing.price:.0f} € | {listing.title}\n{listing.location}\n{listing.url}"
 
 
 def notify_email(listings: Sequence[Listing]) -> None:
@@ -268,10 +266,7 @@ def notify_email(listings: Sequence[Listing]) -> None:
     recipient = os.getenv("DEAL_NOTIFIER_EMAIL_TO")
 
     if not sender or not recipient:
-        print(
-            "[WARN] DEAL_NOTIFIER_EMAIL_FROM/DEAL_NOTIFIER_EMAIL_TO not set; "
-            "skipping email notification."
-        )
+        print("[WARN] DEAL_NOTIFIER_EMAIL_FROM/DEAL_NOTIFIER_EMAIL_TO not set; skipping email notification.")
         return
 
     host = os.getenv("DEAL_NOTIFIER_SMTP_HOST", "localhost")
@@ -290,12 +285,10 @@ def notify_email(listings: Sequence[Listing]) -> None:
     msg["Subject"] = f"[Kleinanzeigen] {len(listings)} new listing(s)"
     msg["From"] = sender
     msg["To"] = recipient
-    body = "\n\n".join(format_listing(l) for l in listings)
+    body = "\n\n".join(format_listing(listing) for listing in listings)
     msg.set_content(body)
 
     try:
-        import smtplib
-
         with smtplib.SMTP(host, port, timeout=10) as smtp:
             if use_starttls:
                 smtp.starttls()
@@ -316,10 +309,7 @@ def notify_ntfy(listings: Sequence[Listing]) -> None:
 
     if not url:
         if not topic:
-            print(
-                "[WARN] DEAL_NOTIFIER_NTFY_URL/DEAL_NOTIFIER_NTFY_TOPIC not set; "
-                "skipping ntfy notification."
-            )
+            print("[WARN] DEAL_NOTIFIER_NTFY_URL/DEAL_NOTIFIER_NTFY_TOPIC not set; skipping ntfy notification.")
             return
         url = f"https://ntfy.sh/{topic}"
 
@@ -346,9 +336,7 @@ def notify_ntfy(listings: Sequence[Listing]) -> None:
             resp.raise_for_status()
             sent += 1
         except Exception as e:
-            print(
-                f"[ERROR] Failed to send ntfy notification for '{listing.url}': {e}"
-            )
+            print(f"[ERROR] Failed to send ntfy notification for '{listing.url}': {e}")
 
     if sent:
         print(f"[INFO] Sent ntfy notification for {sent} listing(s).")
@@ -356,14 +344,12 @@ def notify_ntfy(listings: Sequence[Listing]) -> None:
 
 def print_listings(
     listings: Sequence[Listing],
-    min_price: Optional[float] = None,
-    max_price: Optional[float] = None,
+    min_price: float | None = None,
+    max_price: float | None = None,
 ) -> None:
     if not listings:
         if min_price is not None and max_price is not None:
-            print(
-                f"[INFO] No listings between {min_price} € and {max_price} € found."
-            )
+            print(f"[INFO] No listings between {min_price} € and {max_price} € found.")
         elif min_price is not None:
             print(f"[INFO] No listings with price >= {min_price} € found.")
         elif max_price is not None:
@@ -421,34 +407,22 @@ def parse_search_term_arg(arg: str) -> list[SearchTermConfig]:
     if "-" in price_str:
         low_str, high_str = [s.strip() for s in price_str.split("-", 1)]
         if not low_str or not high_str:
-            raise ValueError(
-                f"Invalid price range '{price_str}' in search term '{arg}'."
-            )
+            raise ValueError(f"Invalid price range '{price_str}' in search term '{arg}'.")
         try:
             local_min = float(low_str.replace(",", "."))
             local_max = float(high_str.replace(",", "."))
-        except ValueError:
-            raise ValueError(
-                f"Invalid price range '{price_str}' in search term '{arg}'."
-            )
+        except ValueError as e:
+            raise ValueError(f"Invalid price range '{price_str}' in search term '{arg}'.") from e
         if local_max < local_min:
-            raise ValueError(
-                f"Invalid price range '{price_str}' in search term '{arg}': "
-                "max < min."
-            )
+            raise ValueError(f"Invalid price range '{price_str}' in search term '{arg}': max < min.")
     else:
         try:
             local_min = float(price_str.replace(",", "."))
-        except ValueError:
-            raise ValueError(
-                f"Invalid price '{price_str}' in search term '{arg}'."
-            )
+        except ValueError as e:
+            raise ValueError(f"Invalid price '{price_str}' in search term '{arg}'.") from e
         local_max = None
 
-    return [
-        SearchTermConfig(term=t, min_price=local_min, max_price=local_max)
-        for t in term_variants
-    ]
+    return [SearchTermConfig(term=t, min_price=local_min, max_price=local_max) for t in term_variants]
 
 
 def run_once(
@@ -456,9 +430,9 @@ def run_once(
     enable_email: bool,
     enable_ntfy: bool,
     search_terms: Iterable[SearchTermConfig | str],
-    min_price: Optional[float] = None,
-    max_price: Optional[float] = None,
-    extra_blacklist: Optional[Sequence[str]] = None,
+    min_price: float | None = None,
+    max_price: float | None = None,
+    extra_blacklist: Sequence[str] | None = None,
 ) -> None:
     all_hits = find_matching_listings(
         search_terms=search_terms,
@@ -484,10 +458,12 @@ def run_once(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description=(
-            "Search Kleinanzeigen for deals matching search terms and "
-            "optionally send notifications."
-        )
+        description="Search Kleinanzeigen for deals matching search terms and optionally send notifications."
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     parser.add_argument(
         "search_terms",
@@ -525,10 +501,7 @@ def main() -> None:
     parser.add_argument(
         "--blacklist",
         action="append",
-        help=(
-            "Additional case-insensitive substrings to blacklist in titles. "
-            "Can be specified multiple times."
-        ),
+        help="Additional case-insensitive substrings to blacklist in titles. Can be specified multiple times.",
     )
     parser.add_argument(
         "--clear-seen",
@@ -548,9 +521,9 @@ def main() -> None:
     except ValueError as e:
         parser.error(str(e))
 
-    min_price: Optional[float] = float(args.min_price) if args.min_price is not None else None
-    max_price: Optional[float] = float(args.max_price) if args.max_price is not None else None
-    extra_blacklist: Optional[Sequence[str]] = args.blacklist
+    min_price: float | None = float(args.min_price) if args.min_price is not None else None
+    max_price: float | None = float(args.max_price) if args.max_price is not None else None
+    extra_blacklist: Sequence[str] | None = args.blacklist
 
     if args.clear_seen:
         try:

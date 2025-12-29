@@ -13,7 +13,7 @@ The code is structured so that `deal_finder/kleinanzeigen.py` acts as a plugin f
   - email (through SMTP), and/or
   - ntfy (HTTP push, one short notification per listing).
 
-Run `kleinanzeigen.py` directly from the repo, or use the installed console script `check-kleinanzeigen-cpus`.
+Run `kleinanzeigen.py` directly from the repo, or use the installed console script `deal-finder`.
 
 ## Usage
 
@@ -39,7 +39,7 @@ python3 kleinanzeigen.py --notify --no-ntfy    # email only
 If installed as a package, you can also use the console script:
 
 ```bash
-check-kleinanzeigen-cpus --notify
+deal-finder "ryzen 9 5900x" --notify
 ```
 
 ### Custom search terms, price filters, blacklist, and cache control
@@ -248,7 +248,7 @@ pip install requests beautifulsoup4
 
 ```bash
 mkdir -p ~/git && cd ~/git
-git clone https://github.com/YOUR_USERNAME/deal-finder.git
+git clone https://github.com/hummat/deal-finder.git
 cd deal-finder
 ```
 
