@@ -8,3 +8,5 @@ build/
 CLAUDE.md
 GEMINI.md
 QWEN.md
+
+.claude/settings.local.json
